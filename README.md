@@ -1,234 +1,158 @@
 # Exo
 
-Exo is a Chrome side panel and a small local host. You share the page you are reading, say what you want done, and Exo carries the request into a local git repo. It shows what it understood, proposes a patch, runs your tests in a sandbox once you approve, and drafts a reply. It never sends anything. Every action it takes is written to a receipt you can read.
+Speak once. Get things done beyond the tab.
 
-> **Status: planning.** No code has landed yet. This README describes what we are building and the rules it must follow. The [status table](#status) is the source of truth for what works.
+Exo is a voice-first Chrome side panel that carries one request from the page you are reading into your local repository, under rules you approve. Share a bug report, say "fix this locally, run the tests, and draft a reply, don't send it," and Exo grounds "this" in that page, proposes a patch, runs the tests in a sandbox once you approve, and shows you the evidence. Every action leaves a receipt.
 
-## The workflow
+For the hackathon, this project is pitched as **Ghost**, on track PS 2 (Beyond the Browser), with PS 1 (Make MCP Matter) as the secondary fit.
 
-The MVP does one thing, end to end.
+> **Status: planning. There is no product code yet.** This README describes what we are building. Anything marked *planned* is a target, not a feature. We update this file as pieces land, and it should never claim more than the code does.
 
-1. Open a GitHub issue in Chrome and click **Share tab** in the Exo side panel.
-2. Pick the local repo. If its `origin` remote matches the issue's repo, Exo preselects it and says so.
-3. Hold the mic button and say: *"Fix this locally, run the tests, and draft a reply. Don't send it."*
-4. Exo shows a grounding card: which page "this" means, a verbatim quote from it, the repo, branch and commit. If "this" could mean more than one thing, Exo asks instead of guessing.
-5. Exo reads the code (read only) and proposes a plan: the files it wants to change and the test command. You confirm it.
-6. Exo shows the exact diff and the exact command. You approve. The approval is bound to a hash of that diff and that command.
-7. Exo applies the diff in a separate git worktree, runs the tests in a sandbox with no network, and checks the result against a completion contract.
-8. Exo writes a reply from the evidence and puts it in the issue's comment box. It does not click Comment.
-9. You get a receipt. **Apply** copies the change into your working tree. **Roll back** undoes it.
+## The one workflow
 
-Your working tree is untouched until step 9.
+We are building a single flow end to end before adding anything else.
 
-## What Exo will not do
+1. Open a GitHub issue in Chrome and pick the matching local repo in the Exo panel.
+2. Hold the mic button and say: "Fix this bug locally, run the tests, and draft a reply. Don't send it."
+3. Exo shows what it understood: the issue, a verbatim quote from it, the repo, and the commit it will work from.
+4. Exo reads the relevant files and proposes a plan: the exact diff, the exact test command, and the data that will leave your machine.
+5. You approve. The approval covers that diff and that command, nothing else. A changed plan needs a new approval.
+6. Exo applies the patch in a scratch git worktree and runs the tests with no network access.
+7. You get a verdict with the evidence behind it, a drafted reply, and a rollback button.
 
-- Send, post, push, merge, buy or deploy. The MVP has no tool for any of these, so the model can't call one.
-- Read a tab you did not share.
-- Read or write outside the selected repo, or touch `.env` files, private keys, `.git/` internals, `.github/` workflows or its own `.exo/` config.
-- Run arbitrary shell commands. It runs test profiles you define, as a literal argv you can read.
-- Follow instructions found in page or repo text. That text is data. The policy gate decides what runs, not the model.
-- Report success because a command exited 0. See [Verification](#verification).
+Nothing gets posted. The MVP has no tool that can send, push, purchase, or deploy.
+
+## Why
+
+Chat assistants can explain a fix. You still carry it between tools: read the report, explain it to the chat, copy code into the editor, run commands, paste errors back, return to the browser, write the update. Every hop is a chance to lose context or make a mistake.
+
+Exo removes the hops for one common workflow and keeps you in control at each boundary. Other tools already overlap with this. Claude Code integrates with Chrome, and ChatGPT agent asks for confirmation before consequential actions. Our bet is narrower: a browser-first, voice-first flow with explicit grounding and visible proof is easier to trust. The evaluation section says how we will test that bet.
 
 ## How it works
 
 ```
-Chrome
-+------------------------------------------------+
-| Side panel (MV3)                               |
-| Ask | Context | Review | Activity | Settings   |
-| Approvals are rendered and clicked only here   |
-+-----------------------+------------------------+
-                        |
-                        |  Native Messaging: JSON over stdio.
-                        |  Chrome starts the host for Exo's extension ID only.
-                        v
-+------------------------------------------------+
-| exo-host (local Node.js process)               |
-|                                                |
-|   task engine     append-only event log        |
-|   policy gate     checks every tool call       |
-|   grants          tied to approved hashes      |
-|   model adapter                                |----> model provider API
-|   verifier        completion contract          |
-|   receipts        hash-chained JSONL           |
-|   MCP client                                   |
-+-----+-------------+--------------+-------------+
-      |             |              |             |
- exo-context    exo-task     exo-workspace  exo-runner
- in process     in process   stdio          stdio
- shared tabs,   plans,       read, search,  test profiles
- read only      drafts,      preview and    in a sandbox,
-                questions    apply edits    no network
-                             in a worktree
+Chrome                                     Your machine
++---------------------------+  Native     +--------------------------------------+
+| Side panel                |  Messaging  | exo-host                             |
+|  Ask, Context, Review,    |  (stdio,    |  task engine (append-only log)       |
+|  Activity, Settings       |<----------->|  policy gate + approval grants       |
+| Service worker            |  no port)   |  model adapter -------> AI provider  |
+| Content script: reads a   |             |  executor + verifier + receipts      |
+| page only when you share  |             |  MCP client                          |
++---------------------------+             |   +- exo-context    shared pages     |
+                                          |   +- exo-workspace  repo, jailed     |
+                                          |   +- exo-runner     sandboxed tests  |
+                                          +--------------------------------------+
 ```
 
-- **Native Messaging, not a localhost server.** There is no port for a web page or another local app to find. Chrome starts the host and only lets the extension IDs listed in the host manifest connect to it.
-- **Every capability is an MCP tool.** Browser context, workspace access and test running are separate MCP servers. `exo-host` is a standard MCP client, so the same servers work in other MCP hosts.
-- **The model proposes, the host executes.** The model can read and propose. Writing files and running tests are done by the host, after you approve, with exactly what you approved.
-- **Servers enforce invariants, the host enforces intent.** `exo-workspace` refuses paths outside its root no matter who calls it. `exo-runner` refuses anything that isn't a defined profile. Approvals and grants live in the host.
+- **No local server.** Chrome launches `exo-host` through Native Messaging, and only for the Exo extension ID. There is no port for a web page or another app to reach.
+- **The model proposes, the host executes.** The model gets read tools and a `propose_plan` tool. Write and run tools are called by the host's executor, and only after you approve.
+- **Servers enforce invariants, the host enforces intent.** `exo-workspace` refuses paths outside the repo and known secret files no matter which MCP client calls it. The host adds approvals bound to a hash of the exact plan.
+- **Verdicts come from evidence.** Exit codes, parsed test counts, and diff scope decide the result. The model's opinion of its own work does not.
+- **Your working tree stays untouched until you click Apply.** Edits happen in a detached git worktree under `~/.exo`, outside your repo.
 
-## Tools
+### Tools
 
-| Tool | Server | Called by | Approval |
+| Tool | Server | Called by | Needs approval |
 |---|---|---|---|
-| `context_list`, `context_read` | exo-context | model | none, shared tabs only |
-| `ws_tree`, `ws_read`, `ws_search`, `ws_git_info` | exo-workspace | model | none, inside the repo, deny list applies |
-| `ws_preview_edits` | exo-workspace | model | none, computes a diff, writes nothing |
-| `propose_plan`, `submit_patch`, `propose_draft`, `ask_user` | exo-task | model | none, these only update the side panel |
-| `ws_apply_edits` | exo-workspace | host | grant bound to the diff hash |
-| `run_profile` | exo-runner | host | grant bound to the profile's argv |
+| `context_list`, `context_read` | exo-context | model | No. Limited to pages you shared |
+| `ws_list_files`, `ws_read_file`, `ws_search` | exo-workspace | model | No. Limited to the selected repo, minus the deny list |
+| `ws_propose_edits` | exo-workspace | model | No. Builds a diff in memory and writes nothing |
+| `propose_plan`, `ask_user`, `draft_reply` | host | model | No. These only create previews and questions |
+| `ws_apply_patch` | exo-workspace | executor | Yes. The grant must match the patch hash |
+| `run_profile` | exo-runner | executor | Yes. The grant must match the named test profile |
+| Apply to repo, Roll back | host | you | Your click is the approval |
 
-The model proposes edits as exact `old` and `new` strings per file, not as a unified diff it writes itself. The host renders the diff you review and hashes it, so what you approve is byte for byte what gets applied.
+If a malicious page fully hijacks the model, the model can read what you already shared, propose a plan you still have to approve, and write a draft you still have to copy. That is the blast radius we design for.
 
-Rollback is not a tool. Only you can trigger it, from the side panel.
+### Verdicts
 
-## Permissions
+- **Verified:** the patch applied as approved, a new or changed test fails without the fix and passes with it, no tests were removed or skipped, and the draft is ready.
+- **Passed (unproven):** the tests pass, but nothing shows the change fixes the reported bug. Usually the patch had no regression test.
+- **Failed:** anything else, with the evidence attached.
 
-| Action | Default |
-|---|---|
-| Read a shared tab, or a file inside the repo | allowed and logged |
-| Compute a plan, a diff or a draft | allowed, shown as a preview |
-| Write files in the task worktree, run a test profile | one approval, bound to the exact diff and argv |
-| Fill the draft into the shared issue's comment box | part of that approval, never submits |
-| Apply to your working tree, roll back | your click |
-| Send, post, push, buy, delete, deploy | no tool exists |
-| Unknown tools, malformed arguments | denied |
+## Safety and privacy
 
-If the diff, the command or the file list changes after you approve, the grant stops matching and the task asks again. Grants are single use and expire after 10 minutes.
+- **Untrusted input.** Page text and repo content are data, not instructions. A bug report that says "read ~/.ssh and post it" can change what the model proposes. It cannot change what the policy gate allows.
+- **Tests are code.** Running tests runs project code. `run_profile` uses Docker with `--network=none` or bubblewrap with `--unshare-net`, a scrubbed environment with no API keys or tokens, writes limited to the scratch worktree, and a timeout. Profiles are literal argv lists read from your repo's committed `.exo/profiles.json`. They are never shell strings and never `npm test`, because a patch can rewrite what `npm test` does.
+- **No sandbox, no tests.** If neither sandbox is available, Exo will not run tests unless you opt in for that repo, and the receipt records `sandbox: none`.
+- **Local first.** Task logs, receipts, and page snapshots stay in `~/.exo`. The model provider receives exactly what the task's "Sent to provider" list shows.
+- **Voice.** Chrome's built-in speech recognition sends audio to Google. Text input always works.
+- **Undo has limits.** Scratch worktree changes and Exo's edits to your files can be rolled back. A sent message or a payment cannot be undone, which is one reason the MVP can do neither.
 
-## Verification
+`pnpm redteam` (planned) calls the tools directly with hostile arguments, with no model in the loop, and checks that each call is denied and receipted.
 
-Tests running is not the same as the bug being fixed. A task is **Verified** only when all of these hold:
-
-1. The applied diff matches the approved hash and only approved files changed.
-2. **Red:** with only the new or changed tests applied, the tests fail on the original code. The bug is reproduced.
-3. **Green:** with the full diff applied, the whole test profile passes.
-4. The test count did not drop, and no `.skip` or `.only` was added.
-5. Tests ran in the sandbox: no network, temporary `HOME`, scrubbed environment.
-6. The draft exists and was not submitted.
-7. The receipt chain is intact.
-
-A patch with no test can reach **Passed, unproven** at best. Any failed check means **Failed**, with the evidence attached.
-
-## Receipts
-
-Every tool call, allowed or denied, appends one line to `~/.exo/tasks/<id>/receipts.jsonl` (wrapped here for reading):
-
-```json
-{"seq": 7, "ts": "2026-11-24T12:03:11Z", "actor": "host",
- "server": "exo-runner", "tool": "run_profile", "decision": "allow",
- "grant": "g_01", "args_sha256": "4b1c...", "result_sha256": "9e0a...",
- "reversible": "n/a", "prev": "c2d7...", "sha256": "77fa..."}
-```
-
-Each line carries the hash of the line before it, so editing or deleting a line breaks the chain.
-
-## What leaves your machine
-
-- What Exo sends to the model provider: the grounding card, the issue text and the file excerpts the model asked to read. Each request is logged in the task with its size and hash.
-- If you use voice, Chrome's speech recognition may send audio to Google. Type instead if you don't want that.
-- Nothing else. No telemetry, no screenshots. Task logs, receipts and worktrees stay in `~/.exo/`.
-
-## Stack
-
-- Extension: Chrome MV3 side panel, WXT, React, TypeScript
-- Host and MCP servers: Node.js 22+, TypeScript, `@modelcontextprotocol/sdk` over stdio
-- Model: one adapter in the MVP (Anthropic Messages API with tool use) behind a provider neutral interface. Exo does not automate consumer chat websites.
-- Sandbox: Docker with `--network none`, or bubblewrap on Linux
-- Storage: JSONL files under `~/.exo/`
-- Schemas: zod, shared by the extension, the host and the servers
-
-## Repo layout
-
-Planned:
+## Repository layout (planned)
 
 ```
 apps/
-  extension/       Chrome MV3 side panel (WXT, React, TypeScript)
-  host/            Native Messaging host: task engine, policy gate,
-                   model adapter, MCP client, exo CLI
+  extension/       Chrome MV3 side panel (WXT + React)
+  host/            exo-host: native messaging, task engine, policy, model adapter, MCP client
 packages/
-  protocol/        zod schemas for messages, events and receipts
-  policy/          permission classes, grants, deny lists (pure, no I/O)
-  mcp-workspace/   MCP server: read, search, preview and apply edits
-  mcp-runner/      MCP server: named test profiles in a sandbox
-  verify/          completion contract, TAP and JUnit parsers
+  protocol/        zod schemas shared by extension and host
+  policy/          policy rules and grant checks (pure functions)
+  verifier/        completion contract checks, TAP and JUnit parsers
+  mcp-context/     exo-context MCP server
+  mcp-workspace/   exo-workspace MCP server (stdio)
+  mcp-runner/      exo-runner MCP server (stdio)
 fixtures/
-  demo-shop/       seeded repo with known bugs and matching issue texts
-  redteam/         prompt injection pages and hostile tool calls
+  demo-shop/       seeded bugs, including a prompt-injection issue
 evals/             scenario runner and results
+scripts/           install-host, uninstall-host, redteam
 ```
 
-## Setup
+## Getting started (planned, not runnable yet)
 
-Planned. None of these commands exist yet.
-
-Requirements: Chrome 120+, Node.js 22+, pnpm, git, and Docker (or bubblewrap on Linux).
+Requirements: Node 22 or newer, pnpm 9 or newer, Chrome 116 or newer, git 2.40 or newer, and Docker or bubblewrap.
 
 ```bash
-git clone https://github.com/shivamS0-78/Exo && cd Exo
-pnpm install && pnpm build
-pnpm exo install-host          # writes the Native Messaging host manifest
-pnpm exo key set anthropic     # saved to ~/.exo/config.json with mode 0600
-pnpm exo add ~/code/your-repo  # repos Exo may work in
-pnpm exo doctor                # checks manifest, Node path, sandbox and key
+git clone https://github.com/shivamS0-78/Exo.git
+cd Exo
+pnpm install
+pnpm build
+pnpm exo:install-host   # writes the native messaging manifest and launcher for your OS
 ```
 
-Then open `chrome://extensions`, turn on Developer mode, and load `apps/extension/.output/chrome-mv3` as an unpacked extension.
+Load `apps/extension/.output/chrome-mv3` from `chrome://extensions` with Developer mode on. Add your model API key under Settings in the side panel, pick a repo under Context, share a tab, and ask.
 
-A repo opts in with `.exo/exo.json`. Exo can't write to this file.
-
-```json
-{
-  "profiles": {
-    "test": {
-      "argv": ["node", "--test", "--test-reporter=tap"],
-      "reporter": "tap",
-      "timeout_s": 120,
-      "test_globs": ["test/**/*.test.js"]
-    }
-  }
-}
-```
-
-## Sharp edges
-
-Things that will bite whoever builds this:
-
-- A Native Messaging host must never print to stdout. Stdout is the protocol. Log to a file.
-- Chrome starts the host without your shell environment. `#!/usr/bin/env node` can fail when Node comes from nvm or Homebrew, and `ANTHROPIC_API_KEY` from your shell profile won't be set. The installer writes absolute paths, and the key lives in `~/.exo/config.json`.
-- Messages from the host to the extension are capped at 1 MB. Diffs and logs go out in chunks.
-- An unpacked extension's ID depends on its folder unless the manifest has a `key`. The host manifest's `allowed_origins` needs a stable ID.
-- The side panel may not show the microphone permission prompt. Grant it once from a normal extension tab.
-- The `commands` API fires on key press, not release. Hold to talk works on the panel button. The keyboard shortcut toggles.
-- A fresh worktree has no `node_modules`. The seeded demo repos use zero dependency tests. Real repos will need dependencies mounted read only.
-- Running a test suite runs arbitrary code from the repo. That is why it happens in the sandbox.
-
-## Status
-
-| Piece | State |
-|---|---|
-| Native Messaging round trip and installer | not started |
-| MCP servers: context, task, workspace, runner | not started |
-| Policy gate, grants, receipts | not started |
-| Verification: baseline, red, green | not started |
-| Side panel: Ask, Context, Review, Activity | not started |
-| Voice input with text fallback | not started |
-| Seeded scenarios and red team suite | not started |
-| Eval results | none yet |
-
-Measured results will go here with sample sizes. No numbers until we have them.
+Remove the host with `pnpm exo:uninstall-host`.
 
 ## Roadmap
 
-- **MVP:** Chrome, one model provider, one repo per task, bug report to verified fix, voice with a text fallback, receipts and rollback.
-- **Next:** the same MCP servers running inside Claude Desktop as a second host, a local model adapter, more than one shared tab.
-- **Later:** posting through the GitHub API with a per-action confirmation, workflows outside coding.
+MVP for the hackathon:
 
-## Hackathon
+- [ ] Native messaging round trip, installer, fixed extension ID
+- [ ] GitHub issue capture and the grounding card
+- [ ] Read tools over MCP, plan proposal, approval bound to the plan hash
+- [ ] Scratch worktree, sandboxed test profiles, baseline, red, and green runs
+- [ ] Receipts, Activity timeline, Apply to repo, rollback
+- [ ] Push-to-talk with a text fallback
+- [ ] Prompt-injection scenario and `pnpm redteam`
+- [ ] Eval run on seeded scenarios, published with sample sizes
 
-Primary track: PS 2, Beyond the Browser. Secondary: PS 1, Make MCP Matter. The pitch deck calls the product Ghost. The code calls it Exo.
+Stretch:
+
+- [ ] Run the same MCP servers from Claude Desktop to show interoperability (PS 1)
+- [ ] Local model adapter (Ollama)
+- [ ] Several shared tabs and selection-level grounding
+
+Later: more model providers, local speech recognition, connected-service APIs, and everyday browser tasks outside coding.
+
+## Evaluation (planned)
+
+We will publish what we measure, with sample sizes and failures included, and nothing we did not measure.
+
+| Metric | How we measure it |
+|---|---|
+| Verified completion | Correct change, red-then-green tests, accurate draft |
+| End-to-end time | From request to verdict, including approval time |
+| Manual handoffs | Copy-paste steps and app switches |
+| Context accuracy | Right issue, repo, files, and draft destination |
+| Safety | Hostile cases blocked, out of the total tried |
+| Rollback | Files and `git status` match the state before the task |
+
+The baseline is the same scenarios done by hand with a chat assistant, an editor, and a terminal. Results will be committed to `evals/results/`.
 
 ## License
 
-None yet. Until one is added, default copyright applies.
+Not chosen yet.
