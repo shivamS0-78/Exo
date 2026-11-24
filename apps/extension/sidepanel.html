@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exo</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div class="brand-mark" aria-hidden="true">E</div>
+      <div><p class="eyebrow">LOCAL WORKSPACE</p><h1>Exo</h1></div>
+      <button id="refresh" class="icon-button" title="Refresh status" aria-label="Refresh status">↻</button>
+    </header>
+
+    <section class="card">
+      <div class="section-heading"><div><p class="eyebrow">1 · CONTEXT</p><h2>Issue and repository</h2></div><span id="connection" class="status-dot" aria-label="Checking host"></span></div>
+      <label for="repositories">Local Git repository</label>
+      <select id="repositories" disabled><option>Connecting to Exo host…</option></select>
+      <p id="repo-help" class="subtle">Your configured repositories stay on this device.</p>
+      <button id="share" class="secondary" disabled>Share current GitHub page</button>
+      <div id="context" class="context hidden" aria-live="polite"></div>
+    </section>
+
+    <section class="card">
+      <div class="section-heading"><div><p class="eyebrow">2 · MODEL</p><h2>OpenRouter</h2></div><span id="model-state" class="subtle">Not configured</span></div>
+      <label for="model">Model slug</label>
+      <input id="model" type="text" value="openai/gpt-4.1-mini" autocomplete="off" spellcheck="false">
+      <label for="api-key" class="key-label">OpenRouter API key</label>
+      <input id="api-key" type="password" placeholder="sk-or-…" autocomplete="new-password">
+      <div class="button-row"><button id="save-settings" class="secondary">Save model and key</button><button id="clear-key" class="quiet">Remove key</button></div>
+      <p class="subtle">The host stores the key with Windows DPAPI. Issue and selected source files go to OpenRouter for proposals.</p>
+    </section>
+
+    <section class="card">
+      <div class="section-heading"><div><p class="eyebrow">3 · REQUEST</p><h2>What should Exo change?</h2></div></div>
+      <label for="request">Request</label>
+      <textarea id="request" rows="3" placeholder="Fix the issue, add a regression test, and draft a reply. Don’t send it."></textarea>
+      <div class="button-row"><button id="speak" class="quiet">Speak</button><button id="propose" class="primary" disabled>Prepare change proposal</button></div>
+      <p class="subtle">The model can propose a patch. It cannot write files or run commands. Voice input uses your browser’s speech service; text input stays available.</p>
+    </section>
+
+    <section id="review" class="card hidden">
+      <div class="section-heading"><div><p class="eyebrow">4 · REVIEW</p><h2>Proposed change</h2></div><span id="task-state" class="pill">Review</span></div>
+      <p id="summary" class="body-copy"></p>
+      <div id="task-issue" class="context"></div>
+      <p id="repository-path" class="subtle"></p>
+      <div class="review-block"><label>Your request</label><p id="task-request" class="body-copy"></p></div>
+      <div class="review-block"><label>Exact patch · <span id="patch-hash"></span></label><pre id="patch"></pre></div>
+      <div class="review-block"><label>Approved test profile</label><p id="profile"></p><pre id="command"></pre></div>
+      <p class="subtle">Runner policy: local Docker image, no network, read-only container system files, and a writable scratch worktree. Repository `node_modules` is mounted read-only when available.</p>
+      <details><summary>Data sent to OpenRouter</summary><pre id="disclosure"></pre></details>
+      <button id="approve" class="primary">Approve this patch and run tests</button>
+      <p id="reply" class="draft hidden"></p>
+    </section>
+
+    <section id="result" class="card hidden">
+      <div class="section-heading"><div><p class="eyebrow">5 · EVIDENCE</p><h2 id="verdict-title">Execution result</h2></div><span id="verdict" class="pill"></span></div>
+      <div id="result-error" class="notice hidden"></div>
+      <div id="baseline-evidence" class="review-block"><label>Baseline run</label><pre id="baseline-output"></pre></div>
+      <div id="fixed-evidence" class="review-block"><label>Patched run</label><pre id="fixed-output"></pre></div>
+      <button id="apply" class="primary hidden">Apply passing patch to repository</button>
+      <button id="rollback" class="secondary hidden">Roll back Exo changes</button>
+      <p id="receipt-path" class="subtle">Local receipt recorded under `~/.exo/receipts.jsonl`.</p>
+    </section>
+
+    <section id="notice" class="notice hidden" role="status" aria-live="polite"></section>
+    <footer><span>Local host · explicit approvals</span><a href="https://openrouter.ai/docs/api-reference/chat-completion" target="_blank" rel="noreferrer">OpenRouter API</a></footer>
+  </main>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

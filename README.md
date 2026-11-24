@@ -2,156 +2,101 @@
 
 Speak once. Get things done beyond the tab.
 
-Exo is a voice-first Chrome side panel that carries one request from the page you are reading into your local repository, under rules you approve. Share a bug report, say "fix this locally, run the tests, and draft a reply, don't send it," and Exo grounds "this" in that page, proposes a patch, runs the tests in a sandbox once you approve, and shows you the evidence. Every action leaves a receipt.
+Exo carries a GitHub issue from Chrome into a selected local Git repository. OpenRouter proposes a patch; the user reviews the exact change and test profile before an isolated run. The original repository stays untouched until the user applies a passing patch.
 
-For the hackathon, this project is pitched as **Ghost**, on track PS 2 (Beyond the Browser), with PS 1 (Make MCP Matter) as the secondary fit.
+## Product flow
 
-> **Status: planning. There is no product code yet.** This README describes what we are building. Anything marked *planned* is a target, not a feature. We update this file as pieces land, and it should never claim more than the code does.
+1. Share a GitHub issue or pull request from the Chrome side panel.
+2. Select its local Git repository and describe the change by text or voice.
+3. Exo sends the issue, request, and a bounded list of tracked source files to OpenRouter. The review panel exposes the full provider payload.
+4. Review the exact patch, test profile, container image, command arguments, and base commit.
+5. Approve the patch and profile hashes. Exo runs the baseline and patched revisions in separate local Docker containers with no network.
+6. Inspect both outputs and the evidence-based verdict. Choose whether to apply a passing patch to the original repository. Exo can roll back its exact applied change if the repository still matches.
 
-## The one workflow
+Exo cannot send messages, push, purchase, or deploy. Model proposals cannot write files or execute commands.
 
-We are building a single flow end to end before adding anything else.
+## Current implementation
 
-1. Open a GitHub issue in Chrome and pick the matching local repo in the Exo panel.
-2. Hold the mic button and say: "Fix this bug locally, run the tests, and draft a reply. Don't send it."
-3. Exo shows what it understood: the issue, a verbatim quote from it, the repo, and the commit it will work from.
-4. Exo reads the relevant files and proposes a plan: the exact diff, the exact test command, and the data that will leave your machine.
-5. You approve. The approval covers that diff and that command, nothing else. A changed plan needs a new approval.
-6. Exo applies the patch in a scratch git worktree and runs the tests with no network access.
-7. You get a verdict with the evidence behind it, a drafted reply, and a rollback button.
+- Chrome Manifest V3 side panel with a repository picker and explicit GitHub page sharing.
+- Chrome Native Messaging host with versioned, bounded JSON messages.
+- Local repository registry, shared issue context, task state, and receipt log under `~/.exo`.
+- OpenRouter chat completions API integration. The API key is stored by the Windows host using current-user DPAPI encryption; the key never enters Chrome storage or task receipts.
+- File selection excludes common sensitive filename patterns and rejects tracked sensitive-looking paths. The review discloses the exact prompt payload and selected files.
+- Model diffs are restricted to reviewed repository paths; path traversal, secret paths, renames, removals, binary changes, and edits to `.exo` are rejected.
+- Approval is single-use and bound to the exact patch and committed test-profile hashes.
+- Tests run in local Windows Docker Desktop only, with `--network=none`, a read-only container root, resource limits, no credentials passed in, and writes limited to the scratch worktree. Images must already be present locally.
+- Git hooks are disabled for host Git operations. Repositories with configured content filters, symlinks, or submodules fail closed.
+- Verdicts distinguish a red-to-green changed test (`verified`), a passing run without that evidence (`passed_unproven`), and failure. Test counts must be recognized to claim verification.
+- Applying a passing patch and rolling it back are separate user actions. A changed repository prevents rollback.
+- Optional speech input has a text fallback. Speech uses the browser speech service.
 
-Nothing gets posted. The MVP has no tool that can send, push, purchase, or deploy.
+The complete Chrome + OpenRouter + Docker flow still needs validation in the target machine environment. Windows is the only host installer currently supplied.
 
-## Why
+## Requirements
 
-Chat assistants can explain a fix. You still carry it between tools: read the report, explain it to the chat, copy code into the editor, run commands, paste errors back, return to the browser, write the update. Every hop is a chance to lose context or make a mistake.
+- Windows 10 or 11, Node.js 22 or newer, pnpm 9 or newer, Git, Chrome 116 or newer, and Docker Desktop configured for Linux containers.
+- A local OpenRouter API key and a model available to that key.
+- Each target repository must be a clean Git working tree and include a committed `.exo/profiles.json`.
+- The selected test image must already be downloaded. If dependencies are installed in the target repository's `node_modules`, Exo mounts that directory read-only into the test container. Native dependencies built for Windows may not work in a Linux container; use a Linux-compatible local image/dependency setup for those projects.
 
-Exo removes the hops for one common workflow and keeps you in control at each boundary. Other tools already overlap with this. Claude Code integrates with Chrome, and ChatGPT agent asks for confirmation before consequential actions. Our bet is narrower: a browser-first, voice-first flow with explicit grounding and visible proof is easier to trust. The evaluation section says how we will test that bet.
+## Install Exo
 
-## How it works
+1. Clone this repository and run `pnpm install` from its root.
+2. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select `apps/extension`.
+3. Copy the extension ID shown by Chrome.
+4. From the Exo project root, register the host for that ID:
 
-```
-Chrome                                     Your machine
-+---------------------------+  Native     +--------------------------------------+
-| Side panel                |  Messaging  | exo-host                             |
-|  Ask, Context, Review,    |  (stdio,    |  task engine (append-only log)       |
-|  Activity, Settings       |<----------->|  policy gate + approval grants       |
-| Service worker            |  no port)   |  model adapter -------> AI provider  |
-| Content script: reads a   |             |  executor + verifier + receipts      |
-| page only when you share  |             |  MCP client                          |
-+---------------------------+             |   +- exo-context    shared pages     |
-                                          |   +- exo-workspace  repo, jailed     |
-                                          |   +- exo-runner     sandboxed tests  |
-                                          +--------------------------------------+
-```
+   ```powershell
+   pnpm host:install -- -ExtensionId <32-character-extension-id>
+   ```
 
-- **No local server.** Chrome launches `exo-host` through Native Messaging, and only for the Exo extension ID. There is no port for a web page or another app to reach.
-- **The model proposes, the host executes.** The model gets read tools and a `propose_plan` tool. Write and run tools are called by the host's executor, and only after you approve.
-- **Servers enforce invariants, the host enforces intent.** `exo-workspace` refuses paths outside the repo and known secret files no matter which MCP client calls it. The host adds approvals bound to a hash of the exact plan.
-- **Verdicts come from evidence.** Exit codes, parsed test counts, and diff scope decide the result. The model's opinion of its own work does not.
-- **Your working tree stays untouched until you click Apply.** Edits happen in a detached git worktree under `~/.exo`, outside your repo.
+5. Add a target repository:
 
-### Tools
+   ```powershell
+   pnpm repo add C:\path\to\your\repository
+   pnpm repo list
+   ```
 
-| Tool | Server | Called by | Needs approval |
-|---|---|---|---|
-| `context_list`, `context_read` | exo-context | model | No. Limited to pages you shared |
-| `ws_list_files`, `ws_read_file`, `ws_search` | exo-workspace | model | No. Limited to the selected repo, minus the deny list |
-| `ws_propose_edits` | exo-workspace | model | No. Builds a diff in memory and writes nothing |
-| `propose_plan`, `ask_user`, `draft_reply` | host | model | No. These only create previews and questions |
-| `ws_apply_patch` | exo-workspace | executor | Yes. The grant must match the patch hash |
-| `run_profile` | exo-runner | executor | Yes. The grant must match the named test profile |
-| Apply to repo, Roll back | host | you | Your click is the approval |
+6. Open Exo from the Chrome toolbar, configure the OpenRouter model and key, then share a GitHub issue with the selected repository.
 
-If a malicious page fully hijacks the model, the model can read what you already shared, propose a plan you still have to approve, and write a draft you still have to copy. That is the blast radius we design for.
+To remove the Chrome host registration, run `pnpm host:uninstall`. This leaves the local repository registry, encrypted OpenRouter credential, and task history under `~/.exo`.
 
-### Verdicts
+## Configure a target repository
 
-- **Verified:** the patch applied as approved, a new or changed test fails without the fix and passes with it, no tests were removed or skipped, and the draft is ready.
-- **Passed (unproven):** the tests pass, but nothing shows the change fixes the reported bug. Usually the patch had no regression test.
-- **Failed:** anything else, with the evidence attached.
+Add `.exo/profiles.json` to the target repository and commit it. Commands are JSON argument arrays and are never passed through a shell. The container image must already exist locally.
 
-## Safety and privacy
-
-- **Untrusted input.** Page text and repo content are data, not instructions. A bug report that says "read ~/.ssh and post it" can change what the model proposes. It cannot change what the policy gate allows.
-- **Tests are code.** Running tests runs project code. `run_profile` uses Docker with `--network=none` or bubblewrap with `--unshare-net`, a scrubbed environment with no API keys or tokens, writes limited to the scratch worktree, and a timeout. Profiles are literal argv lists read from your repo's committed `.exo/profiles.json`. They are never shell strings and never `npm test`, because a patch can rewrite what `npm test` does.
-- **No sandbox, no tests.** If neither sandbox is available, Exo will not run tests unless you opt in for that repo, and the receipt records `sandbox: none`.
-- **Local first.** Task logs, receipts, and page snapshots stay in `~/.exo`. The model provider receives exactly what the task's "Sent to provider" list shows.
-- **Voice.** Chrome's built-in speech recognition sends audio to Google. Text input always works.
-- **Undo has limits.** Scratch worktree changes and Exo's edits to your files can be rolled back. A sent message or a payment cannot be undone, which is one reason the MVP can do neither.
-
-`pnpm redteam` (planned) calls the tools directly with hostile arguments, with no model in the loop, and checks that each call is denied and receipted.
-
-## Repository layout (planned)
-
-```
-apps/
-  extension/       Chrome MV3 side panel (WXT + React)
-  host/            exo-host: native messaging, task engine, policy, model adapter, MCP client
-packages/
-  protocol/        zod schemas shared by extension and host
-  policy/          policy rules and grant checks (pure functions)
-  verifier/        completion contract checks, TAP and JUnit parsers
-  mcp-context/     exo-context MCP server
-  mcp-workspace/   exo-workspace MCP server (stdio)
-  mcp-runner/      exo-runner MCP server (stdio)
-fixtures/
-  demo-shop/       seeded bugs, including a prompt-injection issue
-evals/             scenario runner and results
-scripts/           install-host, uninstall-host, redteam
+```json
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "unit",
+      "name": "Unit tests",
+      "image": "node:22-bookworm",
+      "cwd": ".",
+      "argv": ["npm", "test"],
+      "format": "jest"
+    }
+  ]
+}
 ```
 
-## Getting started (planned, not runnable yet)
+Supported output formats are `tap`, `pytest`, `jest`, `junit`, and `unknown`. A format the verifier cannot count can still pass, but cannot establish a verified red-to-green result. Download images separately with Docker before using Exo; the test container starts with image pulling disabled and no network.
 
-Requirements: Node 22 or newer, pnpm 9 or newer, Chrome 116 or newer, git 2.40 or newer, and Docker or bubblewrap.
+## Local data and provider disclosure
 
-```bash
-git clone https://github.com/shivamS0-78/Exo.git
-cd Exo
-pnpm install
-pnpm build
-pnpm exo:install-host   # writes the native messaging manifest and launcher for your OS
-```
+- `~/.exo/config.json`: repository paths and selected model slug.
+- `~/.exo/openrouter.credential`: API key encrypted for the current Windows user by DPAPI.
+- `~/.exo/shared-context.json`: most recently shared issue and repository identity.
+- `~/.exo/tasks/`: proposal, patch, approval state, test outputs, and verdict.
+- `~/.exo/receipts.jsonl`: append-only product event log.
+- `~/.exo/worktrees/`: temporary worktree metadata is cleaned after execution.
 
-Load `apps/extension/.output/chrome-mv3` from `chrome://extensions` with Developer mode on. Add your model API key under Settings in the side panel, pick a repo under Context, share a tab, and ask.
+The extension reads a GitHub issue only after the user presses Share. It captures the URL, title, and selected text or issue description (up to 6,000 characters). A proposal sends that context, the user's request, model instructions, selected repository name and commit, test-profile IDs/output formats, and up to 45 bounded tracked source files (90,000 characters total) to OpenRouter. Test commands and container image IDs stay local. Expand **Data sent to OpenRouter** to inspect the exact request content before approving local execution. OpenRouter's API endpoint and request format are documented in its [official chat completions reference](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion).
 
-Remove the host with `pnpm exo:uninstall-host`.
+## Product plan
 
-## Roadmap
-
-MVP for the hackathon:
-
-- [ ] Native messaging round trip, installer, fixed extension ID
-- [ ] GitHub issue capture and the grounding card
-- [ ] Read tools over MCP, plan proposal, approval bound to the plan hash
-- [ ] Scratch worktree, sandboxed test profiles, baseline, red, and green runs
-- [ ] Receipts, Activity timeline, Apply to repo, rollback
-- [ ] Push-to-talk with a text fallback
-- [ ] Prompt-injection scenario and `pnpm redteam`
-- [ ] Eval run on seeded scenarios, published with sample sizes
-
-Stretch:
-
-- [ ] Run the same MCP servers from Claude Desktop to show interoperability (PS 1)
-- [ ] Local model adapter (Ollama)
-- [ ] Several shared tabs and selection-level grounding
-
-Later: more model providers, local speech recognition, connected-service APIs, and everyday browser tasks outside coding.
-
-## Evaluation (planned)
-
-We will publish what we measure, with sample sizes and failures included, and nothing we did not measure.
-
-| Metric | How we measure it |
-|---|---|
-| Verified completion | Correct change, red-then-green tests, accurate draft |
-| End-to-end time | From request to verdict, including approval time |
-| Manual handoffs | Copy-paste steps and app switches |
-| Context accuracy | Right issue, repo, files, and draft destination |
-| Safety | Hostile cases blocked, out of the total tried |
-| Rollback | Files and `git status` match the state before the task |
-
-The baseline is the same scenarios done by hand with a chat assistant, an editor, and a terminal. Results will be committed to `evals/results/`.
+See [PLAN.md](PLAN.md) for implementation status, safety boundaries, and remaining work.
 
 ## License
 

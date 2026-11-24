@@ -1,0 +1,11 @@
+{
+  "name": "exo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local-first browser-to-repository assistant with explicit approvals.",
+  "scripts": {
+    "host:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-host.ps1",
+    "host:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-host.ps1",
+    "repo": "node apps/host/exo.cjs"
+  }
+}
